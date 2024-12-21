@@ -1,4 +1,0 @@
-add_subdirectory(variantarraymessage)
-add_subdirectory(variantstream)
-add_subdirectory(vncclientprotocol)
-add_subdirectory(vncserverprotocol)

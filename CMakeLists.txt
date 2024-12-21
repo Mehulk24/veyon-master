@@ -1,357 +1,350 @@
-cmake_minimum_required(VERSION 3.10.0)
-message("Using CMake ${CMAKE_VERSION}")
+CMAKE_MINIMUM_REQUIRED(VERSION 2.4.5)
 
-project(veyon)
+PROJECT(italc)
 
-option(WITH_CORE_ONLY "Build core library only" OFF)
-option(WITH_ADDONS "Build add-ons" OFF)
-option(WITH_TRANSLATIONS "Build translation files" ON)
-option(WITH_TESTS "Build tests and integrate runtime test extensions" OFF)
-option(WITH_LTO "Build with link-time optimization" ON)
-option(WITH_PCH "Reduce compile time by using precompiled headers (requires CMake >= 3.16)" ON)
-option(WITH_UNITY_BUILD "Reduce compile time by using cmake unity builds (requires CMake >= 3.16)" ON)
-option(WITH_ADDRESS_SANITIZER "Build with address sanitizer" OFF)
-option(WITH_THREAD_SANITIZER "Build with thread sanitizer" OFF)
-option(WITH_UB_SANITIZER "Build with undefined behavior sanitizer" OFF)
-option(WITH_FUZZERS "Build LLVM fuzzer tests (implies WITH_TESTS=ON)" OFF)
-option(WITH_BUILTIN_LIBVNC "Build with built-in LibVNCServer/Client" OFF)
+SET(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake/modules ${CMAKE_MODULE_PATH})
+SET(CMAKE_BUILD_TYPE relwithdebinfo)
 
-set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake/modules ${CMAKE_MODULE_PATH})
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-	set(VEYON_DEBUG TRUE)
-elseif(NOT CMAKE_BUILD_TYPE OR CMAKE_BUILD_TYPE STREQUAL "None")
-	set(CMAKE_BUILD_TYPE RelWithDebInfo)
-endif()
+IF(COMMAND CMAKE_POLICY)
+	CMAKE_POLICY(SET CMP0005 NEW)
+	CMAKE_POLICY(SET CMP0003 NEW)
+ENDIF(COMMAND CMAKE_POLICY)
 
-if(VEYON_DEBUG)
-	add_definitions(-DVEYON_DEBUG)
-endif()
+INCLUDE(AddFileDependencies)
+INCLUDE(CheckCSourceCompiles)
+INCLUDE(CheckIncludeFiles)
+INCLUDE(CheckFunctionExists)
+INCLUDE(FindPkgConfig)
+INCLUDE(GNUInstallDirs)
 
-set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
-
-if(COMMAND CMAKE_POLICY)
-	cmake_policy(SET CMP0009 NEW)
-	cmake_policy(SET CMP0022 NEW)
-	cmake_policy(SET CMP0058 NEW)
-	cmake_policy(SET CMP0063 NEW)
-	cmake_policy(SET CMP0069 NEW)
-	if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.12.0")
-		cmake_policy(SET CMP0075 NEW)
-	endif()
-	if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.14.0")
-		cmake_policy(SET CMP0083 NEW)
-		include(CheckPIESupported)
-		check_pie_supported(LANGUAGES CXX)
-		if(CMAKE_CXX_LINK_PIE_SUPPORTED)
-			set(CMAKE_COMPILE_OPTIONS_PIE "-fPIE")
-			set(CMAKE_LINK_OPTIONS_PIE "-pie;-fPIE;-fPIC")
-		else()
-			set(CMAKE_COMPILE_OPTIONS_PIE "-fPIC")
-			set(CMAKE_LINK_OPTIONS_PIE "-fPIC")
-		endif()
-	endif()
-endif()
-
-include(AddFileDependencies)
-include(CheckCSourceCompiles)
-include(CheckIncludeFiles)
-include(CheckFunctionExists)
-include(CheckSymbolExists)
-include(CheckTypeSize)
-include(GNUInstallDirs)
-include(ConfigureFiles)
-include(PchHelpers)
-include(SetDefaultTargetProperties)
-
-find_package(Git)
-
-if(GIT_FOUND)
-	execute_process(COMMAND "${GIT_EXECUTABLE}" describe --tags
+EXECUTE_PROCESS(COMMAND git describe --tags
 		WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 		OUTPUT_STRIP_TRAILING_WHITESPACE
 		OUTPUT_VARIABLE VERSION_STRING)
-	string(REGEX REPLACE "^v([0-9]+)\\..*" "\\1" VERSION_MAJOR "${VERSION_STRING}")
-	string(REGEX REPLACE "^v[0-9]+\\.([0-9]+).*" "\\1" VERSION_MINOR "${VERSION_STRING}")
-	string(REGEX REPLACE "^v[0-9]+\\.[0-9]+\\.([0-9]+).*" "\\1" VERSION_PATCH "${VERSION_STRING}")
+STRING(REGEX REPLACE "^v([0-9]+)\\..*" "\\1" VERSION_MAJOR "${VERSION_STRING}")
+STRING(REGEX REPLACE "^v[0-9]+\\.([0-9]+).*" "\\1" VERSION_MINOR "${VERSION_STRING}")
+STRING(REGEX REPLACE "^v[0-9]+\\.[0-9]+\\.([0-9]+).*" "\\1" VERSION_PATCH "${VERSION_STRING}")
 
-	# determine build number to use in NSIS installer and resource files
-	execute_process(COMMAND "${GIT_EXECUTABLE}" describe --tags
+# can't retrieve version information as not building from Git repository?
+IF(NOT VERSION_STRING)
+	SET(VERSION_MAJOR 3)
+	SET(VERSION_MINOR 0)
+	SET(VERSION_PATCH 3)
+	SET(VERSION_STRING "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}")
+ELSE()
+	# remove leading character from tag name
+	STRING(REPLACE "v" "" VERSION_STRING "${VERSION_STRING}")
+ENDIF()
+
+ADD_DEFINITIONS(-DITALC_VERSION="${VERSION_STRING}")
+
+# determine build number to use in NSIS installer and resource files
+EXECUTE_PROCESS(COMMAND git describe --tags
 		COMMAND cut -d "-" -f2
 		WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 		OUTPUT_STRIP_TRAILING_WHITESPACE
 		OUTPUT_VARIABLE VERSION_BUILD)
-	if(NOT VERSION_BUILD GREATER 0)
-		set(VERSION_BUILD 0)
-	endif()
-
-	# Get list of all committers from git history, ordered by number of commits.
-	# The CONTRIBUTORS file is used by AboutDialog. This information can be provided
-	# with -DCONTRIBUTORS=/path/to/CONTRIBUTORS instead. For instance, to generate
-	# this file for version 3.0.2, the command is:
-	#   git shortlog -sne v3.0.2 | cut -c8-
-	set(CONTRIBUTORS "${CMAKE_BINARY_DIR}/CONTRIBUTORS")
-	if(NOT EXISTS "${CONTRIBUTORS}")
-		execute_process(COMMAND "${GIT_EXECUTABLE}" shortlog -s d160d147165271516589c304cb1b8f5e48f8527d..HEAD
-			COMMAND cut -c8-
-			COMMAND sort -f
-			OUTPUT_FILE "${CONTRIBUTORS}"
-			WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-			TIMEOUT 10)
-	endif()
-
-endif()
-
-# can't retrieve version information as not building from Git repository?
-if(NOT VERSION_STRING)
-	set(VERSION_MAJOR 4)
-	set(VERSION_MINOR 99)
-	set(VERSION_PATCH 0)
-	set(VERSION_BUILD 0)
-	set(VERSION_STRING "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}")
-else()
-	# remove leading character from tag name
-	string(REPLACE "v" "" VERSION_STRING "${VERSION_STRING}")
-endif()
-
-# set up basic platform variables
-if(WIN32)
-	set(VEYON_BUILD_WINDOWS 1)
-	if(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
-		set(VEYON_BUILD_WIN64 1)
-		set(VEYON_WINDOWS_ARCH "win64")
-	else()
-		set(VEYON_BUILD_WIN32 1)
-		set(VEYON_WINDOWS_ARCH "win32")
-	endif()
-	add_definitions(-DUNICODE -D_UNICODE)
-	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-attributes")
-	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-attributes")
-endif()
-if(APPLE)
-	set(VEYON_BUILD_APPLE 1)
-endif()
-if(UNIX AND NOT ANDROID)
-	set(VEYON_BUILD_LINUX 1)
-endif()
-if(ANDROID)
-	set(VEYON_BUILD_ANDROID 1)
-endif()
-
-# set up library and plugin path variables
-if(VEYON_BUILD_ANDROID)
-	set(CMAKE_INSTALL_PREFIX "/")
-	set(VEYON_LIB_DIR "lib")
-	set(VEYON_INSTALL_PLUGIN_DIR "${VEYON_LIB_DIR}/veyon")
-	set(VEYON_INSTALL_DATA_DIR "${CMAKE_INSTALL_DATADIR}/veyon")
-	set(VEYON_PLUGIN_DIR "")
-	set(VEYON_TRANSLATIONS_DIR "/translations")
-else()
-	if(CMAKE_INSTALL_LIBDIR)
-		set(VEYON_LIB_DIR "${CMAKE_INSTALL_LIBDIR}/veyon" CACHE INTERNAL "Veyon library directory")
-	else()
-		set(VEYON_LIB_DIR lib/veyon CACHE INTERNAL "Veyon library directory")
-	endif()
-
-	set(VEYON_INSTALL_PLUGIN_DIR "${VEYON_LIB_DIR}")
-	set(VEYON_INSTALL_DATA_DIR "${CMAKE_INSTALL_DATADIR}/veyon")
-
-	if(WIN32)
-		set(VEYON_PLUGIN_DIR "plugins")
-		set(VEYON_TRANSLATIONS_DIR "translations")
-	else()
-		set(VEYON_PLUGIN_DIR "../${VEYON_LIB_DIR}")
-		set(VEYON_TRANSLATIONS_DIR "../share/veyon/translations")
-	endif()
-endif()
+IF(NOT VERSION_BUILD GREATER 0)
+	SET(VERSION_BUILD 0)
+ENDIF()
 
 
-# find required Qt modules
-option(WITH_QT6 "Build for Qt 6" ON)
-if(WITH_QT6)
-	set(QT_MAJOR_VERSION 6)
-	find_package(Qt6 COMPONENTS
-		Core
-		Core5Compat
-		Concurrent
-		Gui
-		Widgets
-		Network
-		Quick
-		QuickControls2
-		REQUIRED)
-	if(WITH_TRANSLATIONS)
-		find_package(Qt6 COMPONENTS LinguistTools REQUIRED)
-	endif()
-	if(VEYON_BUILD_ANDROID)
-		find_package(Qt6 COMPONENTS AndroidExtras REQUIRED)
-	endif()
-else()
-	set(QT_MAJOR_VERSION 5)
-	find_package(Qt5Core REQUIRED)
-	find_package(Qt5Concurrent REQUIRED)
-	find_package(Qt5Gui REQUIRED)
-	find_package(Qt5Widgets REQUIRED)
-	find_package(Qt5Network REQUIRED)
-	find_package(Qt5Quick REQUIRED)
-	find_package(Qt5QuickControls2 REQUIRED)
-	if(WITH_TRANSLATIONS)
-		find_package(Qt5LinguistTools REQUIRED)
-	endif()
-	if(VEYON_BUILD_ANDROID)
-		find_package(Qt5AndroidExtras REQUIRED)
-	endif()
-endif()
+INCLUDE(DetectMachine)
 
-# find required libraries
-find_package(Qca-qt${QT_MAJOR_VERSION} REQUIRED)
-find_package(OpenSSL REQUIRED)
+# check for pthreads and TLS support
+IF(WIN32)
+	SET(ITALC_HAVE_LIBPTHREAD true)
+ELSE(WIN32)
+    FIND_PACKAGE(Threads)
+	IF(CMAKE_USE_PTHREADS_INIT)
+		SET(ITALC_HAVE_LIBPTHREAD true)
+	ENDIF(CMAKE_USE_PTHREADS_INIT)
+ENDIF(WIN32)
 
-# find Linux-specific packages
-if(VEYON_BUILD_LINUX)
-	include(XdgInstall)
-endif()
+CHECK_C_SOURCE_COMPILES("static __thread int p = 0; int main() {}" ITALC_HAVE_TLS)
 
-if(${CMAKE_VERSION} VERSION_LESS "3.16.0")
-	set(WITH_PCH OFF)
-	set(WITH_UNITY_BUILD OFF)
-elseif(WITH_UNITY_BUILD)
-	set(CMAKE_UNITY_BUILD ON)
-endif()
+CHECK_INCLUDE_FILES(arpa/inet.h ITALC_HAVE_ARPA_INET_H)
+CHECK_INCLUDE_FILES(unistd.h ITALC_HAVE_UNISTD_H)
+CHECK_INCLUDE_FILES(fcntl.h ITALC_HAVE_FCNTL_H)
+CHECK_INCLUDE_FILES(limits.h ITALC_HAVE_LIMITS_H)
+CHECK_INCLUDE_FILES(memory.h ITALC_HAVE_MEMORY_H)
+CHECK_INCLUDE_FILES(netdb.h ITALC_HAVE_NETDB_H)
+CHECK_INCLUDE_FILES(netinet/in.h ITALC_HAVE_NETINET_IN_H)
+CHECK_INCLUDE_FILES(stdint.h ITALC_HAVE_STDINT_H)
+CHECK_INCLUDE_FILES(stdlib.h ITALC_HAVE_STDLIB_H)
+CHECK_INCLUDE_FILES(stdbool.h ITALC_HAVE_STDBOOL_H)
+CHECK_INCLUDE_FILES(string.h ITALC_HAVE_STRING_H)
+CHECK_INCLUDE_FILES(strings.h ITALC_HAVE_STRINGS_H)
+CHECK_INCLUDE_FILES(sys/ioctl.h ITALC_HAVE_SYS_IOCTL_H)
+CHECK_INCLUDE_FILES(sys/socket.h ITALC_HAVE_SYS_SOCKET_H)
+CHECK_INCLUDE_FILES(sys/time.h ITALC_HAVE_SYS_TIME_H)
+CHECK_INCLUDE_FILES(sys/timeb.h ITALC_HAVE_SYS_TIMEB_H)
+CHECK_INCLUDE_FILES(sys/stat.h ITALC_HAVE_SYS_STAT_H)
+CHECK_INCLUDE_FILES(syslog.h ITALC_HAVE_SYSLOG_H)
+CHECK_INCLUDE_FILES(unistd.h ITALC_HAVE_UNISTD_H)
+CHECK_INCLUDE_FILES(pwd.h ITALC_HAVE_PWD_H)
+CHECK_INCLUDE_FILES(sys/types.h ITALC_HAVE_SYS_TYPES_H)
+CHECK_INCLUDE_FILES(utmpx.h ITALC_HAVE_UTMPX_H)
+CHECK_INCLUDE_FILES(sys/wait.h ITALC_HAVE_SYS_WAIT_H)
+CHECK_INCLUDE_FILES(time.h ITALC_HAVE_TIME_H)
+CHECK_INCLUDE_FILES(errno.h ITALC_HAVE_ERRNO_H)
+CHECK_INCLUDE_FILES(pthread.h ITALC_HAVE_PTHREAD_H)
+CHECK_INCLUDE_FILES(sys/ipc.h ITALC_HAVE_SYS_IPC_H)
+CHECK_INCLUDE_FILES(sys/shm.h ITALC_HAVE_SYS_SHM_H)
+CHECK_INCLUDE_FILES(stdarg.h ITALC_HAVE_STDARG_H)
+CHECK_INCLUDE_FILES(signal.h ITALC_HAVE_SIGNAL_H)
+CHECK_INCLUDE_FILES(ctype.h ITALC_HAVE_CTYPE_H)
+CHECK_INCLUDE_FILES(process.h ITALC_HAVE_PROCESS_H)
+CHECK_INCLUDE_FILES(dlfcn.h ITALC_HAVE_DLFCN_H)
+CHECK_INCLUDE_FILES(inttypes.h ITALC_HAVE_INTTYPES_H)
+CHECK_INCLUDE_FILES(vfork.h ITALC_HAVE_VFORK_H)
+CHECK_INCLUDE_FILES(linux/fb.h ITALC_HAVE_LINUX_FB_H)
+CHECK_INCLUDE_FILES(linux/input.h ITALC_HAVE_LINUX_INPUT_H)
+CHECK_INCLUDE_FILES(linux/uinput.h ITALC_HAVE_LINUX_UINPUT_H)
+CHECK_INCLUDE_FILES(linux/videodev.h ITALC_HAVE_LINUX_VIDEODEV_H)
+CHECK_INCLUDE_FILES(linux/videodev2.h ITALC_HAVE_LINUX_VIDEODEV2_H)
+CHECK_INCLUDE_FILES(ws2tcpip.h ITALC_HAVE_WS2TCPIP_H)
 
-if(VEYON_BUILD_WIN32)
-	set(WITH_LTO OFF)
-endif()
+IF(NOT ITALC_BUILD_WIN32)
+	FIND_PACKAGE(PAM REQUIRED)
+ENDIF()
 
-if(WITH_LTO)
-	include(ProcessorCount)
-	ProcessorCount(CPU_COUNT)
-	set(GCC_LTO_FLAGS "-flto=${CPU_COUNT} -fno-fat-lto-objects")
-endif()
+SET(CMAKE_REQUIRED_LIBRARIES "-lm")
 
-if(WITH_FUZZERS)
-	set(WITH_TESTS ON)
-endif()
+SET(FUNCS dup2 floor ftime geteuid gethostbyname gethostname getpwnam getpwuid getspnam gettimeofday getuid grantpt inet_ntoa initgroups memcmp memcpy memmove memset mkfifo mmap pow putenv select seteuid setpgrp setsid setutxent socket strchr strdup strerror strpbrk strrchr strstr uname waitpid)
+FOREACH(_func ${FUNCS})
+	STRING(TOUPPER "${_func}" fuc)
+	CHECK_FUNCTION_EXISTS(${_func} ITALC_HAVE_${fuc})
+ENDFOREACH(_func ${FUNCS})
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstack-protector-strong ${CFLAGS}")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fstack-protector-strong -fno-exceptions ${CXXFLAGS}")
+# TODO: ITALC_WORDS_BIGENDIAN
 
-if(NOT VEYON_DEBUG AND NOT CMAKE_C_FLAGS MATCHES "FORTIFY_SOURCE" AND NOT CMAKE_CXX_FLAGS MATCHES "FORTIFY_SOURCE")
-	add_definitions(-D_FORTIFY_SOURCE=2)
-endif()
+# check for required Qt5 modules
 
-if(WITH_TESTS)
-	enable_testing(TRUE)
-	if(WITH_QT6)
-		find_package(Qt6 COMPONENTS Test REQUIRED)
-	else()
-		find_package(Qt5Test REQUIRED)
-	endif()
-        set(VEYON_WITH_TESTS ON)
-else()
-	set(CMAKE_C_VISIBILITY_PRESET hidden)
-	set(CMAKE_CXX_VISIBILITY_PRESET hidden)
-	set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
-endif()
-
-add_definitions(
-	-DQT_DEPRECATED_WARNINGS
-	-DQT_DISABLE_DEPRECATED_BEFORE=0x050e00
-	-DQT_NO_CAST_FROM_ASCII
-	-DQT_NO_CAST_TO_ASCII
-	-DQT_NO_CAST_FROM_BYTEARRAY
-	-DQT_NO_KEYWORDS
-	-DQT_NO_NARROWING_CONVERSIONS_IN_CONNECT
-	-DQT_USE_QSTRINGBUILDER
-	-DQT_STRICT_ITERATORS
-	)
-
-file(GLOB_RECURSE IN_FILES RELATIVE ${CMAKE_SOURCE_DIR} "veyonconfig.h.in" "*.rc.in" "*.desktop.in" "*.policy.in" "*.service.in" "*.manifest.in" "*.nsi.in")
-configure_files(${IN_FILES})
-
-set(CMAKE_AUTOMOC TRUE)
-set(CMAKE_AUTOUIC TRUE)
-set(CMAKE_AUTORCC TRUE)
-
-set(3rdparty_DIR ${CMAKE_SOURCE_DIR}/3rdparty)
-set(ultravnc_DIR ${3rdparty_DIR}/ultravnc)
-set(libvncserver_DIR ${3rdparty_DIR}/libvncserver)
-set(x11vnc_DIR ${3rdparty_DIR}/x11vnc)
-set(libfakekey_DIR ${3rdparty_DIR}/libfakekey)
-set(qthttpserver_DIR ${3rdparty_DIR}/qthttpserver)
-
-set(CMAKE_SKIP_BUILD_RPATH  FALSE)
-set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
-set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/${VEYON_LIB_DIR}")
-set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
-
-if(VEYON_BUILD_ANDROID)
-	include(AndroidDeployQt)
-	set(_CMAKE_ANDROID_DIR "${CMAKE_SOURCE_DIR}/android")
-	set(ANDROID_INSTALL_DIR "${CMAKE_BINARY_DIR}/install")
-	set(ANDROID_EXTRA_PLUGINS ${ANDROID_INSTALL_DIR}/${VEYON_LIB_DIR}/veyon/ ${QT_DIR}/lib/qca-qt5/crypto ${ANDROID_INSTALL_DIR}/jar)
-	set(ANDROID_EXTRA_LIBS)
-	list(APPEND ANDROID_EXTRA_LIBS "${ANDROID_SYSROOT_GENERIC}/libc++_shared.so")
-	list(APPEND ANDROID_EXTRA_LIBS "${QT_DIR}/lib/libldap.so"
-		"${QT_DIR}/lib/liblber.so"
-		"${QT_DIR}/lib/libsasl2.so")
-
-	add_custom_target(prepare-apk
-		COMMAND rm -rf ${ANDROID_INSTALL_DIR}
-		COMMAND cd ${CMAKE_BINARY_DIR}/core && make DESTDIR=${ANDROID_INSTALL_DIR} install
-		COMMAND cd ${CMAKE_BINARY_DIR}/plugins && make DESTDIR=${ANDROID_INSTALL_DIR} install
-		)
-endif()
+FIND_PACKAGE(Qt5Core REQUIRED)
+FIND_PACKAGE(Qt5Gui REQUIRED)
+FIND_PACKAGE(Qt5Widgets REQUIRED)
+FIND_PACKAGE(Qt5Xml REQUIRED)
+FIND_PACKAGE(Qt5Network REQUIRED)
+FIND_PACKAGE(Qt5LinguistTools REQUIRED)
 
 
-include(cmake/CPackDefinitions.cmake)
+# find libraries
+FIND_PACKAGE(ZLIB REQUIRED)
+FIND_PACKAGE(JPEG REQUIRED)
+IF(ITALC_BUILD_WIN32)
+	SET(OPENSSL_LIBRARIES -L${MINGW_PREFIX}/bin -leay32)
+ELSE(ITALC_BUILD_WIN32)
+	FIND_PACKAGE(OpenSSL REQUIRED)
+ENDIF(ITALC_BUILD_WIN32)
+FIND_PACKAGE(PNG)
 
+# find X libraries
+IF(NOT ITALC_BUILD_WIN32)
+	FIND_PACKAGE(X11 REQUIRED)
+
+	SET(CMAKE_REQUIRED_LIBRARIES ${X11_LIBRARIES} ${X11_XTest_LIB})
+	SET(ITALC_HAVE_X11 TRUE)
+
+	IF(X11_XShm_FOUND)
+		SET(ITALC_HAVE_XSHM TRUE)
+	ENDIF(X11_XShm_FOUND)
+	IF(X11_XTest_FOUND)
+		SET(ITALC_HAVE_XTEST TRUE)
+	ENDIF(X11_XTest_FOUND)
+	IF(X11_Xinerama_FOUND)
+		SET(ITALC_HAVE_LIBXINERAMA TRUE)
+	ENDIF(X11_Xinerama_FOUND)
+	IF(X11_Xrandr_FOUND)
+		SET(ITALC_HAVE_LIBXRANDR TRUE)
+	ENDIF(X11_Xrandr_FOUND)
+	IF(X11_Xfixes_FOUND)
+		SET(ITALC_HAVE_LIBXFIXES TRUE)
+	ENDIF(X11_Xfixes_FOUND)
+	IF(X11_Xdamage_FOUND)
+		SET(ITALC_HAVE_LIBXDAMAGE TRUE)
+	ENDIF(X11_Xdamage_FOUND)
+
+	CHECK_FUNCTION_EXISTS(XReadScreen ITALC_HAVE_SOLARIS_XREADSCREEN)
+	CHECK_FUNCTION_EXISTS(FBPMForceLevel ITALC_HAVE_FBPM)
+	CHECK_FUNCTION_EXISTS(DPMSForceLevel ITALC_HAVE_DPMS)
+	CHECK_FUNCTION_EXISTS(XTestGrabControl ITALC_HAVE_XTESTGRABCONTROL)
+	CHECK_FUNCTION_EXISTS(XRecordEnableContextAsync ITALC_HAVE_RECORD)
+	CHECK_INCLUDE_FILES(X11/extensions/readdisplay.h ITALC_HAVE_IRIX_XREADDISPLAY)
+	CHECK_INCLUDE_FILES(X11/XKBlib.h ITALC_HAVE_XKBLIB_H)
+	IF(ITALC_HAVE_XKBLIB_H)
+		CHECK_FUNCTION_EXISTS(XkbSelectEvents ITALC_HAVE_XKEYBOARD)
+	ENDIF(ITALC_HAVE_XKBLIB_H)
+	SET(ITALC_HAVE_LIBCRYPT FALSE)
+ENDIF(NOT ITALC_BUILD_WIN32)
+SET(ITALC_ALLOW24BPP TRUE)
+SET(ITALC_BACKCHANNEL TRUE)
+
+# find Java compiler for the JavaViewer
+FIND_PACKAGE(Java)
+IF(JAVA_COMPILE)
+	SET(STATUS_JAVA "yes")
+ELSE(JAVA_COMPILE)
+	SET(STATUS_JAVA "no - please install a Java compiler")
+ENDIF(JAVA_COMPILE)
+
+
+SET(ITALCCONFIG ${CMAKE_BINARY_DIR}/italcconfig.h)
+SET(RFBCONFIG ${CMAKE_BINARY_DIR}/rfb/rfbconfig.h)
+
+CONFIGURE_FILE(${CMAKE_SOURCE_DIR}/italcconfig.h.in ${ITALCCONFIG})
+SET(IN_FILES iTALC.nsi ima/data/italc ima/data/italc.desktop ica/ica.rc ima/italc.rc imc/imc.rc)
+FOREACH(f ${IN_FILES})
+	CONFIGURE_FILE(${CMAKE_SOURCE_DIR}/${f}.in ${CMAKE_BINARY_DIR}/${f} @ONLY)
+ENDFOREACH(f ${IN_FILES})
+
+FILE(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/rfb)
+IF(${ITALCCONFIG} IS_NEWER_THAN ${RFBCONFIG})
+	EXECUTE_PROCESS(COMMAND sed -e "s/ITALC_/LIBVNCSERVER_/g" INPUT_FILE ${ITALCCONFIG} OUTPUT_FILE ${RFBCONFIG})
+ENDIF(${ITALCCONFIG} IS_NEWER_THAN ${RFBCONFIG})
+
+SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fno-exceptions -std=c++11 ${CXXFLAGS}")
+SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall ${CFLAGS}")
+IF(ITALC_BUILD_WIN32)
+	SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-attributes -Wno-pragmas")
+ELSE()
+	SET(OPENSSL_LIBRARIES ${OPENSSL_LIBRARIES} -lcrypto)
+ENDIF(ITALC_BUILD_WIN32)
+
+ADD_DEFINITIONS(-DLIBVNCSERVER_HAVE_LIBZ)
+ADD_DEFINITIONS(-DLIBVNCSERVER_HAVE_LIBJPEG)
+IF(PNG_FOUND)
+	ADD_DEFINITIONS(-DLIBVNCSERVER_HAVE_LIBPNG)
+ENDIF(PNG_FOUND)
+
+INCLUDE_DIRECTORIES(${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR}/lib/include ${ZLIB_INCLUDE_DIR} ${JPEG_INCLUDE_DIR} ${PNG_INCLUDE_DIR} ${OPENSSL_INCLUDE_DIR})
+LINK_DIRECTORIES(${CMAKE_INSTALL_PREFIX}/lib ${CMAKE_BINARY_DIR}/lib)
+LINK_LIBRARIES(${QT_LIBRARIES} ${ZLIB_LIBRARIES} ${JPEG_LIBRARIES} ${PNG_LIBRARIES} ${OPENSSL_LIBRARIES})
+
+SET(CMAKE_SKIP_BUILD_RPATH  FALSE)
+SET(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
+SET(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/${LIB_DIR}")
+SET(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 # make sub-directories
-add_subdirectory(core)
-if(NOT WITH_CORE_ONLY)
-	add_subdirectory(server)
-	add_subdirectory(service)
-	add_subdirectory(master)
-	add_subdirectory(configurator)
-	add_subdirectory(cli)
-	add_subdirectory(worker)
-	add_subdirectory(plugins)
-	add_subdirectory(tests)
-	add_subdirectory(translations)
-endif()
-if(WITH_ADDONS)
-	add_subdirectory(addons)
-endif()
+ADD_SUBDIRECTORY(lib)
+ADD_SUBDIRECTORY(ica)
+ADD_SUBDIRECTORY(ima)
+ADD_SUBDIRECTORY(imc)
+
+INSTALL()
 
 #
-# add Windows installer related targets
+# rules for building localizations
 #
-if(WIN32)
-	include(WindowsInstaller)
-endif()
+FILE(GLOB italc_LOCALES lib/resources/*.ts)
+SET(ts_targets "")
+SET(qm_targets "")
+FILE(GLOB_RECURSE italc_SOURCES *.cpp *.h *.ui)
+FOREACH(_ts_file ${italc_LOCALES})
+	STRING(REPLACE "${CMAKE_SOURCE_DIR}/lib/resources/" "" _ts_target "${_ts_file}")
+	STRING(REPLACE ".ts" ".qm" _qm_file "${_ts_file}")
+	STRING(REPLACE ".ts" ".qm" _qm_target "${_ts_target}")
+	ADD_CUSTOM_TARGET(${_ts_target} COMMAND ${Qt5_LUPDATE_EXECUTABLE} -I${CMAKE_SOURCE_DIR}/lib/include -locations none -no-obsolete ${italc_SOURCES} -ts ${_ts_file})
+	# add command and target for generating/updating QM file if TS file is newer or no QM file exists yet
+	ADD_CUSTOM_COMMAND(OUTPUT ${_qm_file} COMMAND ${Qt5_LRELEASE_EXECUTABLE} ${_ts_file} -qm ${_qm_file} DEPENDS ${_ts_file})
+	ADD_CUSTOM_TARGET(${_qm_target} ALL DEPENDS ${_qm_file})
+	LIST(APPEND ts_targets "${_ts_target}")
+	LIST(APPEND qm_targets "${_qm_target}")
+ENDFOREACH(_ts_file ${italc_LOCALES})
+
+ADD_CUSTOM_TARGET(update-locales)
+FOREACH(_item ${ts_targets})
+	ADD_DEPENDENCIES(update-locales ${_item})
+ENDFOREACH(_item ${ts_targets})
+
+ADD_CUSTOM_TARGET(GenerateTranslationFiles)
+FOREACH(_item ${qm_targets})
+	ADD_DEPENDENCIES(GenerateTranslationFiles ${_item})
+ENDFOREACH(_item ${qm_targets})
+
 
 #
-# package generation
+# add target for generating Windows installer
 #
-include(CPack)
+SET(TMP "italc-${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}.${VERSION_BUILD}")
 
+ADD_CUSTOM_TARGET(win-nsi
+			COMMAND make
+			COMMAND rm -rf ${TMP}
+			COMMAND mkdir -p ${TMP}
+			COMMAND wget -P ${TMP} https://github.com/oblitum/Interception/releases/download/1.0.0/Interception.zip
+			COMMAND unzip -j -d ${TMP} ${TMP}/Interception.zip Interception/command\ line\ installer/install-interception.exe
+			COMMAND rm ${TMP}/*.zip
+			COMMAND cp lib/ItalcCore.dll ica/ica.exe ica/win32/vnchooks.dll ica/win32/authSSP.dll ima/italc.exe imc/imc.exe ${TMP}
+			COMMAND ${STRIP} ${TMP}/*
+			COMMAND cp -r ${CMAKE_SOURCE_DIR}/doc ${TMP}
+			COMMAND cp -r ${CMAKE_SOURCE_DIR}/contrib ${TMP}
+			COMMAND cp ${CMAKE_SOURCE_DIR}/COPYING ${TMP}
+			COMMAND cp ${CMAKE_SOURCE_DIR}/COPYING ${TMP}/LICENSE.TXT
+			COMMAND cp ${CMAKE_SOURCE_DIR}/README.md ${TMP}/README.TXT
+			COMMAND todos ${TMP}/*.txt ${TMP}/*.TXT
+			COMMAND makensis iTALC.nsi
+			#COMMAND rm -rf ${TMP}
+		)
 
 
 #
 # display configuration information
 #
 
-message("\n"
-	"Veyon build summary\n"
-	"--------------------\n"
-	"* Version                     : ${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}.${VERSION_BUILD} (${VERSION_STRING})\n"
-	"* Install prefix              : ${CMAKE_INSTALL_PREFIX}\n"
-	"* Library directory           : ${CMAKE_INSTALL_PREFIX}/${VEYON_LIB_DIR}\n"
-	"* Plugin directory            : ${CMAKE_INSTALL_PREFIX}/${VEYON_INSTALL_PLUGIN_DIR}\n"
-	"* Build type                  : ${CMAKE_BUILD_TYPE}\n"
-	"* Build platform              : ${CMAKE_SYSTEM_PROCESSOR}\n"
-	"* Compile flags               : ${CMAKE_C_FLAGS} (CXX: ${CMAKE_CXX_FLAGS})\n"
-	"* Link-time optimization      : ${WITH_LTO}\n"
-	"* Use precompiled headers     : ${WITH_PCH}\n"
-	"* Use unity build             : ${WITH_UNITY_BUILD}\n"
-	)
+MESSAGE("\n"
+"iTALC build summary\n"
+"--------------------\n"
+"* Version                     : ${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}.${VERSION_BUILD} (${VERSION_STRING})\n"
+"* Install prefix              : ${CMAKE_INSTALL_PREFIX}\n"
+"* Build type                  : ${CMAKE_BUILD_TYPE}\n"
+"* Platform                    : ${CMAKE_SYSTEM_PROCESSOR} (${Machine})\n"
+"* Builtin JavaViewer support  : ${STATUS_JAVA}\n"
+"* Compile flags               : ${CMAKE_C_FLAGS} (CXX: ${CMAKE_CXX_FLAGS})\n"
+)
+
+MESSAGE(
+"\n"
+"-----------------------------------------------------------------\n"
+"IMPORTANT:\n"
+"After installing missing packages, remove CMakeCache.txt before\n"
+"running cmake again!\n"
+"-----------------------------------------------------------------\n"
+"\n\n")
+
+
+INCLUDE(InstallRequiredSystemLibraries)
+SET(CPACK_PACKAGE_DESCRIPTION_SUMMARY "iTALC - Intelligent Teaching And Learning with Computers")
+SET(CPACK_PACKAGE_VENDOR "ITALC Developers")
+SET(CPACK_PACKAGE_DESCRIPTION_FILE "${CMAKE_SOURCE_DIR}/README.md")
+SET(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/COPYING")
+SET(CPACK_PACKAGE_VERSION_MAJOR "${VERSION_MAJOR}")
+SET(CPACK_PACKAGE_VERSION_MINOR "${VERSION_MINOR}")
+SET(CPACK_PACKAGE_VERSION_PATCH "${VERSION_PATCH}")
+SET(CPACK_PACKAGE_INSTALL_DIRECTORY "iTALC ${VERSION}")
+IF(WIN32)
+SET(CPACK_PACKAGE_ICON "${CMAKE_SOURCE_DIR}/data\\\\nsis_branding.bmp")
+SET(CPACK_NSIS_MUI_ICON "${CMAKE_SOURCE_DIR}/ima/data\\\\italc.ico")
+SET(CPACK_NSIS_INSTALLED_ICON_NAME "italc.exe")
+SET(CPACK_NSIS_DISPLAY_NAME "iTALC ${VERSION}")
+SET(CPACK_NSIS_HELP_LINK "http:\\\\\\\\italc.sourceforge.net")
+SET(CPACK_NSIS_URL_INFO_ABOUT "http:\\\\\\\\italc.sourceforge.net")
+SET(CPACK_NSIS_CONTACT "italc-devel@lists.sourceforge.net")
+SET(CPACK_PACKAGE_EXECUTABLES "italc.exe;iTALC ${VERSION}")
+SET(CPACK_NSIS_MENU_LINKS "italc.exe;iTALC ${VERSION}")
+ELSE(WIN32)
+SET(CPACK_STRIP_FILES "bin/italc;bin/ica;${LIB_DIR}/*.so")
+SET(CPACK_PACKAGE_EXECUTABLES "italc" "iTALC binary")
+ENDIF(WIN32)
+
+SET(MACOSX_BUNDLE_ICON_FILE "${CMAKE_SOURCE_DIR}/data/themes/default/icon.png")
+SET(MACOSX_BUNDLE_GUI_IDENTIFIER "iTALC")
+SET(MACOSX_BUNDLE_LONG_VERSION_STRING "${VERSION}")
+SET(MACOSX_BUNDLE_BUNDLE_NAME "iTALC")
+SET(MACOSX_BUNDLE_SHORT_VERSION_STRING "${VERSION}")
+SET(MACOSX_BUNDLE_BUNDLE_VERSION "${VERSION}")
+SET(MACOSX_BUNDLE_COPYRIGHT "Tobias Doerffel, 2008")
+
+INCLUDE(CPack)
+
