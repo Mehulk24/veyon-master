@@ -1,0 +1,18 @@
+macro(add_windows_resource TARGET)
+	if(VEYON_BUILD_WINDOWS)
+		set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/${TARGET}.rc PROPERTIES INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR})
+		target_sources(${TARGET} PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/${TARGET}.rc)
+	endif()
+endmacro()
+
+macro(make_graphical_app TARGET)
+	if(VEYON_BUILD_WINDOWS)
+		set_target_properties(${TARGET} PROPERTIES LINK_FLAGS -mwindows)
+	endif()
+endmacro()
+
+macro(make_console_app TARGET)
+	if(VEYON_BUILD_WINDOWS)
+		set_target_properties(${TARGET} PROPERTIES LINK_FLAGS -mconsole)
+	endif()
+endmacro()
