@@ -4,7 +4,7 @@ workflows:
     max_build_duration: 60
     environment:
       flutter: stable  # If using Flutter, otherwise remove this line
-      xcode: "13.2"    # Use a supported version of Xcode (e.g., 13.2)
+      xcode: "10.1"    # Use Xcode 10.1
       cocoapods: stable # Ensure CocoaPods is available
 
     # Install dependencies
